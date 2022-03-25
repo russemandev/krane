@@ -9,7 +9,8 @@ module Krane
     def sync(cache)
       super
       @pods = exists? ? find_pods(cache) : []
-      @nodes = find_nodes(cache) if @nodes.blank?
+
+      @nodes = refresh_nodes(cache)
     end
 
     def status
@@ -58,16 +59,38 @@ module Krane
     def relevant_pods_ready?
       return true if rollout_data["desiredNumberScheduled"].to_i == rollout_data["numberReady"].to_i # all pods ready
       relevant_node_names = @nodes.map(&:name)
+      puts "relevant_node_names: #{relevant_node_names.size}"
       considered_pods = @pods.select { |p| relevant_node_names.include?(p.node_name) }
-      @logger.debug("DaemonSet is reporting #{rollout_data['numberReady']} pods ready." \
-        " Considered #{considered_pods.size} pods out of #{@pods.size} for #{@nodes.size} nodes.")
+      puts "considered_pods: #{considered_pods}"
+      puts "DaemonSet is reporting #{rollout_data['numberReady']} pods ready." \
+        " Considered #{considered_pods.size} pods out of #{@pods.size} for #{@nodes.size} nodes."
+      puts "considered_pods.present?: #{considered_pods.present?}"
+      puts "considered_pods.all?(&:deploy_succeeded?): #{considered_pods.all?(&:deploy_succeeded?)}"
+      puts "comapre: #{rollout_data["numberReady"].to_i >= considered_pods.length}"
       considered_pods.present? &&
         considered_pods.all?(&:deploy_succeeded?) &&
         rollout_data["numberReady"].to_i >= considered_pods.length
     end
 
+    def refresh_nodes(cache)
+      new_nodes = find_nodes(cache)
+
+      return new_nodes if @nodes.blank?
+
+      # Remove non-existent nodes
+      @nodes.select do |node|
+        new_nodes.find { |n| n.name == node.name } != nil
+      end
+    end
+
     def find_nodes(cache)
       all_nodes = cache.get_all(Node.kind)
+      all_nodes = all_nodes.select { |node_data| node_data.dig('spec', 'unschedulable').to_s.downcase != 'true' }
+#        cond = node_data.dig('status', 'conditions').find { |c| c['type'].downcase == 'ready' }
+#        return false if cond.nil?
+#        cond['status'].downcase == 'true'
+#      end
+
       all_nodes.map { |node_data| Node.new(definition: node_data) }
     end
 
